@@ -12,9 +12,22 @@ import (
 	"io"
 	"log"
 	_ "math"
+	"net/http"
 	"os"
 	"strings"
 	"time"
+	// "net/url"
+	"io/ioutil"
+	// "bufio" // to scan and tokenize buffered input data from an io.Reader source
+	// "strconv"
+	// "regexp"
+	// "errors" // for errors.New()
+	// "os" // for operations with dirs
+	// "time" // for sleep
+	// "sort" // for sorging
+	// "encoding/base64"
+	"bytes"
+	"encoding/json"
 )
 
 var (
@@ -63,6 +76,21 @@ func RndBetweenU(bottom, top int) (result int) {
 }
 
 func main() {
+
+	// test is the game in progress or it's a new gema
+
+	// if new game then create new game board and lock
+
+	// read game board from file
+
+	// iterate the game as one turn for every player
+
+	// test game end
+
+	// if geme ended then remove game board and lock files
+	// send the boad state and winner info
+	// otherwise
+	// send only board state and some catchword for supporting players
 
 	// var records [][]string
 
@@ -139,7 +167,11 @@ func main() {
 	// 	fmt.Println(err)
 	// }
 
-	test_gameplay()
+	//test_gameplay()
+	e := empty_game_board()
+	put_symbol(&e, 1, "X")
+	s := to_string(e)
+	fmt.Printf(s)
 }
 
 func test_gameplay() {
@@ -149,17 +181,23 @@ func test_gameplay() {
 	// shake the generator!
 	SRnd64(time.Now().Unix())
 
+	// create a new geme board if there is no any one
+	wtire_game_board_to_csv("game_board.csv", empty_game_board())
+
 	game_board := read_geme_board_from_cvs("game_board.csv")
 	turn := "X"
 
 	print_game_board(game_board)
 
 	var winner string
+	turns_count := 9
+	for game_end := false; !game_end && turns_count > 0; {
+		fmt.Println()
 
-	for game_end := false; !game_end; game_end = test_game_end(game_board, &winner) {
 		// try until success
 		for stop := false; !stop; {
 			pos := RndBetweenU(1, 10)
+			fmt.Println("pos:", pos, " turn:", turn, " remains turns:", turns_count)
 			err := put_symbol(&game_board, pos, turn)
 			if err == nil {
 				stop = true
@@ -167,6 +205,7 @@ func test_gameplay() {
 		}
 
 		print_game_board(game_board)
+		// wtire_game_board_to_csv("game_board.csv", game_board)
 
 		// end turn
 		if turn == "X" {
@@ -175,11 +214,21 @@ func test_gameplay() {
 			turn = "X"
 		}
 
+		game_end = test_game_end(game_board, &winner)
+		turns_count--
+
 		// Calling Sleep method
-		time.Sleep(1 * time.Second)
+		// time.Sleep(1 * time.Second)
 	}
 
-	fmt.Println("Winner is a player with symbol", winner, "!")
+	if winner == "X" || winner == "O" {
+		fmt.Println("Winner is a player with symbol", winner)
+		send("Winner is a player with symbol " + winner)
+	} else {
+		fmt.Println("It is a drawn game")
+		send("It is a drawn game")
+	}
+
 }
 
 func match_three(board [][]string, line []int) (string, error) {
@@ -230,6 +279,9 @@ func test_game_end(board [][]string, winner *string) (geme_end bool) {
 		{1, 2, 3},
 		{4, 5, 6},
 		{7, 8, 9},
+		{1, 4, 7},
+		{2, 5, 8},
+		{3, 6, 9},
 		{1, 5, 9},
 		{3, 5, 7},
 	}
@@ -267,7 +319,6 @@ func wtire_game_board_to_csv(fullpath string, board [][]string) error {
 	}
 
 	w := csv.NewWriter(f)
-	defer w.Flush()
 
 	for _, record := range board {
 		if err := w.Write(record); err != nil {
@@ -286,13 +337,9 @@ func wtire_game_board_to_csv(fullpath string, board [][]string) error {
 }
 
 func read_geme_board_from_cvs(fullpath string) (records [][]string) {
-OPEN:
 	f, err := os.Open(fullpath)
 	if err != nil {
-		// log.Fatal("Can't open file: ", fullpath)
-		// create a new geme board if there is no any one
-		wtire_game_board_to_csv(fullpath, empty_game_board())
-		goto OPEN
+		log.Fatal("Can't open file: ", fullpath)
 	}
 	defer func(err error) {
 		if err := f.Close(); err != nil {
@@ -313,7 +360,7 @@ OPEN:
 		}
 
 		records = append(records, record)
-		fmt.Println(record)
+		// fmt.Println(record)
 		line_count++
 	}
 	// fmt.Println("Lnes read:", line_count)
@@ -325,6 +372,24 @@ OPEN:
 
 	return records
 }
+
+func to_string(board [][]string) string {
+	result := ""
+
+	for _, line := range board {
+		for _, sym := range line {
+			if sym == "*" {
+				result += " "
+			} else {
+				result += sym
+			}
+		}
+		result += "\n"
+	}
+
+	return result
+}
+
 func print_game_board(board [][]string) {
 	for _, line := range board {
 		fmt.Println(line)
@@ -476,4 +541,60 @@ func test_write_csv(records [][]string) {
 	if err := w.Error(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// {
+// 	"username": "Dungeones Keeperra",
+// 	"icon_emoji": ":smiling_imp:",
+// 	"channel": "#backend",
+// 	"text": "День расплаты настал!:fire:\nСегодня необходимо уделить время ревью.\nПерейдите в канал <https://aeoner.slack.com/archives/CNHR5NV45|#mr_backend> и доведите дело до конца.\nИсполните свой долг самурая."
+// }
+// Creatе an issue
+func send(text string) []byte {
+	// prepare body payload
+	payload, _ := json.Marshal(struct {
+		Username   string `json:"username"`
+		Icon_emoji string `json:"icon_emoji"`
+		Channel    string `json:"channel"`
+		Text       string `json:"text"`
+	}{
+		Username:   "Dirty J",
+		Icon_emoji: ":ghost:",
+		Channel:    "#test_ch",
+		Text:       text,
+	})
+
+	fmt.Println(string(payload))
+
+	// prepare request
+	//TODO: user path methods to concatinate!
+	url := "https://hooks.slack.com/services/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"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
+	req.Header.Set("Content-Type", "application/json")
+	// req.SetBasicAuth(AEON_USER, AEON_USER_TOKEN)
+
+	fmt.Println(req)
+
+	// prepare http client
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Println(err)
+		}
+
+	}()
+
+	fmt.Println(resp.StatusCode)
+
+	// prpcess response
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	return body
 }
