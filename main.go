@@ -19,7 +19,7 @@ import (
 	// "net/url"
 	"io/ioutil"
 	// "bufio" // to scan and tokenize buffered input data from an io.Reader source
-	// "strconv"
+	"strconv"
 	// "regexp"
 	// "errors" // for errors.New()
 	// "os" // for operations with dirs
@@ -91,6 +91,95 @@ func main() {
 	// send the boad state and winner info
 	// otherwise
 	// send only board state and some catchword for supporting players
+
+	var turn string = "X"
+	var winner string
+	var turns_count int
+	var game_end bool = false
+
+	// shake the generator!
+	SRnd64(time.Now().Unix())
+
+	// test is the game in progress or it's a new gema
+	state, err := read_lock_from_csv("lock.csv")
+	// if new game then create new game board and lock
+	if err != nil {
+		// create a new geme board and lock
+		wtire_lock_to_csv("lock.csv", default_state())
+		wtire_game_board_to_csv("game_board.csv", empty_game_board())
+		state = default_state()
+		s := state[0][0]
+		turns_count, _ = strconv.Atoi(s)
+		fmt.Println("NO LOCK New game:", turns_count)
+	} else {
+		s := state[0][0]
+		turns_count, _ = strconv.Atoi(s)
+		fmt.Println("LOCKED Continue game:", turns_count)
+	}
+
+	// read game board from file
+	game_board := read_geme_board_from_cvs("game_board.csv")
+
+	// iterate the game as one turn for every player
+	for i := 0; i < 2; i++ {
+		// fmt.Println(turn)
+		// try until success
+		for stop := false; !stop && turns_count > 0; {
+			pos := RndBetweenU(1, 10)
+			// fmt.Println("pos:", pos, " turn:", turn, " remains turns:", turns_count)
+			err := put_symbol(&game_board, pos, turn)
+			if err == nil {
+				stop = true
+			}
+		}
+
+		// end turn
+		if turn == "X" {
+			turn = "O"
+		} else {
+			turn = "X"
+		}
+
+		turns_count--
+	}
+
+	// save and show game board
+	wtire_game_board_to_csv("game_board.csv", game_board)
+	// print_game_board(game_board)
+	fmt.Printf(to_string(game_board))
+
+	// test game end
+	game_end = test_game_end(game_board, &winner)
+
+	// save state into the lock file
+	s := strconv.Itoa(turns_count)
+	state[0][0] = s
+	wtire_lock_to_csv("lock.csv", state)
+
+	// if geme ended then remove game board and lock files
+	// send the boad state and winner info
+	if game_end || turns_count < 1 {
+		// unlock
+		err := os.Remove("lock.csv")
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Println("UNLOCKED")
+
+		// send state actualization
+		if winner == "X" || winner == "O" {
+			fmt.Println("Winner is a player with symbol", winner)
+			// send("Winner is a player with symbol " + winner)
+		} else {
+			fmt.Println("It is a drawn game")
+			// send("It is a drawn game")
+		}
+	}
+
+	// otherwise
+	// send only board state and some catchword for supporting players
+	message := "```" + to_string(game_board) + "```"
+	send(message)
 
 	// var records [][]string
 
@@ -168,10 +257,44 @@ func main() {
 	// }
 
 	//test_gameplay()
-	e := empty_game_board()
-	put_symbol(&e, 1, "X")
-	s := to_string(e)
-	fmt.Printf(s)
+
+	// // test to string
+	// e := empty_game_board()
+	// put_symbol(&e, 1, "X")
+	// s := to_string(e)
+	// fmt.Printf(s)
+
+	// // test locking
+
+	// for i := 0; i < 2; i++ {
+	// 	state, err := read_lock_from_csv("lock.csv")
+	// 	if err != nil {
+	// 		wtire_lock_to_csv("lock.csv", default_state())
+	// 		state, _ = read_lock_from_csv("lock.csv")
+	// 		s := state[0][0]
+	// 		turns_count, _ := strconv.Atoi(s)
+	// 		s = strconv.Itoa(turns_count-1)
+	// 		state[0][0] = s
+	// 		wtire_lock_to_csv("lock.csv", state)
+	// 		fmt.Println("NO LOCK New game:", turns_count)
+	// 	} else {
+	// 		turns_count := state[0][0]
+	// 		fmt.Println("LOCKED Continue game:", turns_count)
+	// 	}
+	// 	if i == 1 {
+	// 		err := os.Remove("lock.csv")
+	// 		if err != nil {
+	// 			fmt.Println(err)
+	// 		}
+	// 		fmt.Println("UNLOCKED")
+	// 	}
+	// }
+} // eof main
+
+func default_state() [][]string {
+	return [][]string{
+		{"9"},
+	}
 }
 
 func test_gameplay() {
@@ -300,11 +423,40 @@ func test_game_end(board [][]string, winner *string) (geme_end bool) {
 func empty_game_board() [][]string {
 	return [][]string{
 		{"*", "|", "*", "|", "*"},
-		{"-", "|", "-", "|", "-"},
+		{"-", "+", "-", "+", "-"},
 		{"*", "|", "*", "|", "*"},
-		{"-", "|", "-", "|", "-"},
+		{"-", "+", "-", "+", "-"},
 		{"*", "|", "*", "|", "*"},
 	}
+}
+
+func wtire_lock_to_csv(fullpath string, state [][]string) error {
+	f, err := os.OpenFile(fullpath, os.O_RDWR|os.O_CREATE, 0755)
+	defer func(err error) {
+		if err := f.Close(); err != nil {
+			log.Fatal(err)
+		}
+	}(err)
+	if err != nil {
+		log.Fatal("Can't create new file", fullpath)
+	}
+
+	w := csv.NewWriter(f)
+
+	for _, record := range state {
+		if err := w.Write(record); err != nil {
+			log.Fatalln("error writing record to csv:", err)
+		}
+	}
+
+	// Записываем любые буферизованные данные в подлежащий writer (стандартный вывод).
+	w.Flush()
+
+	if err := w.Error(); err != nil {
+		log.Fatal(err)
+	}
+
+	return err
 }
 
 func wtire_game_board_to_csv(fullpath string, board [][]string) error {
@@ -334,6 +486,39 @@ func wtire_game_board_to_csv(fullpath string, board [][]string) error {
 	}
 
 	return err
+}
+
+func read_lock_from_csv(fullpath string) ([][]string, error) {
+	var records [][]string = nil
+
+	f, err := os.Open(fullpath)
+	if err != nil {
+		// log.Fatal("Can't open lock file: ", fullpath)
+		return records, err
+	}
+	defer func(err error) {
+		if err := f.Close(); err != nil {
+			log.Fatal(err)
+		}
+	}(err)
+
+	r := csv.NewReader(f)
+
+	line_count := 0
+	for {
+		record, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		records = append(records, record)
+		line_count++
+	}
+
+	return records, err
 }
 
 func read_geme_board_from_cvs(fullpath string) (records [][]string) {
@@ -568,7 +753,7 @@ func send(text string) []byte {
 
 	// prepare request
 	//TODO: user path methods to concatinate!
-	url := "https://hooks.slack.com/services/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"
+	url := "https://hooks.slack.com/services/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"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
 	// req.SetBasicAuth(AEON_USER, AEON_USER_TOKEN)
